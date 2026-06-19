@@ -53,9 +53,9 @@ export const pool = (() => {
          * @returns {void}
          */
         init: (callback, lists = []) => {
-            if (!window.isSecureContext) {
-                throw new Error('this application required secure context');
-            }
+        //    if (!window.isSecureContext) {
+        //        throw new Error('this application required secure context');
+        //    }
 
             cachePool = new Map();
             Promise.all(lists.concat([cacheRequest]).map((v) => window.caches.open(v).then((c) => cachePool.set(v, c)))).then(() => callback());
