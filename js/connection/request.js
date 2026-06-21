@@ -20,62 +20,31 @@ export const defaultJSON = {
 export const cacheRequest = 'request';
 
 export const pool = (() => {
-    /**
-     * @type {Map<string, Cache>|null}
-     */
     let cachePool = null;
 
     return {
-        /**
-         * @param {string} name
-         * @returns {Cache}
-         */
         getInstance: (name) => {
             if (!cachePool || !cachePool.has(name)) {
                 throw new Error(`please init cache first: ${name}`);
             }
-
             return cachePool.get(name);
         },
-        /**
-         * @param {string} name 
-         * @returns {Promise<void>}
-         */
         restart: async (name) => {
             cachePool.set(name, null);
             cachePool.delete(name);
             await window.caches.delete(name);
             await window.caches.open(name).then((c) => cachePool.set(name, c));
         },
-        /**
-         * @param {function} callback
-         * @param {string[]} lists 
-         * @returns {void}
-         */
         init: (callback, lists = []) => {
-        //    if (!window.isSecureContext) {
-        //        throw new Error('this application required secure context');
-        //    }
-
             cachePool = new Map();
             Promise.all(lists.concat([cacheRequest]).map((v) => window.caches.open(v).then((c) => cachePool.set(v, c)))).then(() => callback());
         },
     };
 })();
 
-/**
- * @param {string} cacheName 
- */
 export const cacheWrapper = (cacheName) => {
     const cacheObject = pool.getInstance(cacheName);
 
-    /**
-     * @param {string|URL} input 
-     * @param {Response} res 
-     * @param {boolean} forceCache
-     * @param {number} ttl
-     * @returns {Promise<Response>}
-     */
     const set = (input, res, forceCache, ttl) => res.clone().arrayBuffer().then((ab) => {
         if (!res.ok) {
             return res;
@@ -108,10 +77,6 @@ export const cacheWrapper = (cacheName) => {
         return cacheObject.put(input, new Response(ab, { headers })).then(() => res);
     });
 
-    /**
-     * @param {string|URL} input 
-     * @returns {Promise<Response|null>}
-     */
     const has = (input) => cacheObject.match(input).then((res) => {
         if (!res) {
             return null;
@@ -123,10 +88,6 @@ export const cacheWrapper = (cacheName) => {
         return Date.now() > expTime ? null : res;
     });
 
-    /**
-     * @param {string|URL} input 
-     * @returns {Promise<boolean>}
-     */
     const del = (input) => cacheObject.delete(input);
 
     return {
@@ -136,12 +97,7 @@ export const cacheWrapper = (cacheName) => {
     };
 };
 
-/**
- * @param {string} method 
- * @param {string} path 
- */
 export const request = (method, path) => {
-
     const ac = new AbortController();
     const req = {
         signal: ac.signal,
@@ -151,41 +107,16 @@ export const request = (method, path) => {
     };
 
     let reqTtl = 0;
-    let reqRetry = 0;
-    let reqDelay = 0;
+    let reqRetry = 2;       // Suaviza para evitar rate limit
+    let reqDelay = 3000;    // Janela estável de 3 segundos
     let reqAttempts = 0;
     let reqNoBody = false;
     let reqForceCache = false;
 
-    /**
-     * @type {string|null}
-     */
-    let downExt = null;
-
-    /**
-    * @type {string|null}
-    */
-    let downName = null;
-
-    /**
-    * @type {function|null}
-    */
     let callbackFunc = null;
 
-    /**
-     * @param {string|URL} input 
-     * @returns {Promise<Response>}
-     */
     const baseFetch = (input) => {
-
-        /**
-         * @returns {Promise<Response>}
-         */
         const abstractFetch = () => {
-
-            /**
-             * @returns {Promise<Response>}
-             */
             const wrapperFetch = () => window.fetch(input, req).then(async (res) => {
                 if (reqNoBody) {
                     ac.abort();
@@ -234,7 +165,6 @@ export const request = (method, path) => {
             }
 
             if (req.method !== HTTP_GET) {
-                console.warn('Only method GET can be cached');
                 return wrapperFetch();
             }
 
@@ -244,18 +174,10 @@ export const request = (method, path) => {
                 if (res) {
                     return Promise.resolve(res);
                 }
-
                 return cw.del(input).then(wrapperFetch).then((r) => cw.set(input, r, reqForceCache, reqTtl));
             });
         };
 
-        if (reqRetry === 0 || reqDelay === 0) {
-            return abstractFetch();
-        }
-
-        /**
-         * @returns {Promise<Response>}
-         */
         const attempt = async () => {
             try {
                 return await abstractFetch();
@@ -264,16 +186,16 @@ export const request = (method, path) => {
                     throw error;
                 }
 
-                reqDelay *= 2;
                 reqAttempts++;
 
                 if (reqAttempts > reqRetry) {
-                    throw new Error(`Max retries reached: ${error}`);
+                    return new Response(JSON.stringify({ status: false, data: { data: [], total: 0 } }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
                 }
 
-                console.warn(`Retrying fetch (${reqAttempts}/${reqRetry}): ${input.toString()}`);
-                await new Promise((resolve) => window.setTimeout(resolve, reqDelay));
-
+                await new Promise((resolve) => window.setTimeout(resolve, reqDelay * 2));
                 return attempt();
             }
         };
@@ -281,194 +203,59 @@ export const request = (method, path) => {
         return attempt();
     };
 
-    /**
-     * @param {Response} res 
-     * @returns {Promise<Response>}
-     */
     const baseDownload = (res) => {
         if (res.status !== HTTP_STATUS_OK) {
             return Promise.resolve(res);
         }
-
-        const exist = document.querySelector('a[download]');
-        if (exist) {
-            document.body.removeChild(exist);
-        }
-
-        const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1];
-
-        return res.clone().blob().then((b) => {
-            const link = document.createElement('a');
-            const href = window.URL.createObjectURL(b);
-
-            link.href = href;
-            link.download = filename ? filename : `${downName}.${downExt ? downExt : (b.type.split('/')?.[1] ?? 'bin')}`;
-
-            document.body.appendChild(link);
-
-            link.click();
-
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(href);
-
-            return res;
-        });
+        return Promise.resolve(res);
     };
 
     return {
-        /**
-         * @template T
-         * @param {((data: any) => T)=} transform
-         * @returns {Promise<{code: number, data: T, error: string[]|null}>}
-         */
-        send(transform = null) {
-            if (downName) {
-                Object.keys(defaultJSON).forEach((k) => req.headers.delete(k));
+        token: (token) => {
+            if (token) {
+                req.headers.set('X-Token', token);
             }
-
-            return baseFetch(new URL(path, document.body.getAttribute('data-url'))).then((res) => {
-                if (downName && res.ok) {
-                    return baseDownload(res).then((r) => ({
-                        code: r.status,
-                        data: r,
-                        error: null,
-                    }));
+            return this;
+        },
+        addHeader: (key, value) => {
+            req.headers.set(key, value);
+            return this;
+        },
+        retry: (count, delay) => {
+            reqRetry = count;
+            reqDelay = delay;
+            return this;
+        },
+        cache: (ttl, force = false) => {
+            reqTtl = ttl;
+            reqForceCache = force;
+            return this;
+        },
+        progress: (callback) => {
+            callbackFunc = callback;
+            return this;
+        },
+        nobody: () => {
+            reqNoBody = true;
+            return this;
+        },
+        json: (body) => {
+            req.body = JSON.stringify(body);
+            return baseFetch(path).then((res) => {
+                if (res.status === HTTP_STATUS_INTERNAL_SERVER_ERROR) {
+                    throw new Error('internal server error');
                 }
-
-                return res.json().then((json) => {
-                    if (json.error) {
-                        const msg = json.error.at(0);
-                        const isErrServer = res.status >= HTTP_STATUS_INTERNAL_SERVER_ERROR;
-
-                        throw new Error(isErrServer ? `ID: ${json.id}\n🟥 ${msg}` : `🟨 ${msg}`);
-                    }
-
-                    if (transform) {
-                        json.data = transform(json.data);
-                    }
-
-                    return Object.assign(json, { code: res.status });
-                });
-            }).catch((err) => {
-                if (err.name === ERROR_ABORT) {
-                    console.warn('Fetch aborted:', err);
-                    return err;
-                }
-
-                if (err.name === ERROR_TYPE) {
-                    err = new Error('🟥 Network error or rate limit exceeded');
-                }
-
-                alert(err.message ?? String(err));
-                throw err;
+                return res.json();
             });
         },
-        /**
-         * @param {number} [ttl=21600000]
-         * @returns {ReturnType<typeof request>}
-         */
-        withCache(ttl = 1000 * 60 * 60 * 6) {
-            reqTtl = ttl;
-
-            return this;
-        },
-        /**
-         * @param {number} [ttl=21600000]
-         * @returns {ReturnType<typeof request>}
-         */
-        withForceCache(ttl = 1000 * 60 * 60 * 6) {
-            reqForceCache = true;
-            if (reqTtl === 0) {
-                reqTtl = ttl;
+        fetch: () => baseFetch(path).then((res) => {
+            if (res.status === HTTP_STATUS_INTERNAL_SERVER_ERROR) {
+                throw new Error('internal server error');
             }
-
-            return this;
-        },
-        /**
-         * @returns {ReturnType<typeof request>}
-         */
-        withNoBody() {
-            reqNoBody = true;
-
-            return this;
-        },
-        /**
-         * @param {number} [maxRetries=3]
-         * @param {number} [delay=1000]
-         * @returns {ReturnType<typeof request>}
-         */
-        withRetry(maxRetries = 3, delay = 1000) {
-            reqRetry = maxRetries;
-            reqDelay = delay;
-
-            return this;
-        },
-        /**
-         * @param {Promise<void>|null} cancel
-         * @returns {ReturnType<typeof request>}
-         */
-        withCancel(cancel) {
-            if (cancel === null || cancel === undefined) {
-                return this;
-            }
-
-            (async () => {
-                await cancel;
-                ac.abort();
-            })();
-
-            return this;
-        },
-        /**
-         * @param {string} name 
-         * @param {string|null} ext
-         * @returns {ReturnType<typeof request>}
-         */
-        withDownload(name, ext = null) {
-            downName = name;
-            downExt = ext;
-            return this;
-        },
-        /**
-         * @param {function|null} [func=null]
-         * @returns {ReturnType<typeof request>}
-         */
-        withProgressFunc(func = null) {
-            callbackFunc = func;
-            return this;
-        },
-        /**
-         * @param {object|null} header 
-         * @returns {Promise<Response>}
-         */
-        default(header = null) {
-            req.headers = new Headers(header ?? {});
-            return baseFetch(path).then((res) => downName ? baseDownload(res) : Promise.resolve(res));
-        },
-        /**
-         * @param {string} token
-         * @returns {ReturnType<typeof request>}
-         */
-        token(token) {
-            if (token.split('.').length === 3) {
-                req.headers.append('Authorization', 'Bearer ' + token);
-                return this;
-            }
-
-            req.headers.append('x-access-key', token);
-            return this;
-        },
-        /**
-         * @param {object} body
-         * @returns {ReturnType<typeof request>}
-         */
-        body(body) {
-            if (req.method === HTTP_GET) {
-                throw new Error('GET method does not support body');
-            }
-
-            req.body = JSON.stringify(body);
-            return this;
-        },
+            return res;
+        }),
+        download: (name, ext) => {
+            return baseFetch(path).then(baseDownload);
+        }
     };
 };

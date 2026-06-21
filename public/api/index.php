@@ -48,14 +48,41 @@ if (preg_match('#^/api/v2/config$#', $requestUri)) {
     exit;
 }
 
+//*********************************meu comentario
 // 4. Rota para Listar as Mensagens no Mural
+//if (preg_match('#^/api/v2/comment$#', $requestUri) && $_SERVER['REQUEST_METHOD'] === 'GET') {
+//    header('Content-Type: application/json');
+//    try {
+//        $stmt = $pdo->query("SELECT uuid, name, presence, comment, created_at FROM comments ORDER BY id DESC");
+//        $comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Formata os dados de saída idênticos ao padrão do JavaScript do convite
+//        echo json_encode([
+//            "status" => true,
+//            "code" => 200,
+//            "data" => [
+//                "data" => $comments,
+//                "total" => count($comments)
+//            ]
+//        ]);
+//    } catch (Exception $e) {
+//        echo json_encode(["status" => false, "data" => ["data" => [], "total" => 0]]);
+//    }
+//    exit;
+//}
+//**********************meu comentario
+
+//*************************sujestao da IA
+
+// 4. Rota para Listar as Mensagens no Mural (Com Cache para evitar Rate Limit)
 if (preg_match('#^/api/v2/comment$#', $requestUri) && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    // Diz para a Vercel guardar esse resultado na memória por 5 minutos (300 segundos)
+    header('Cache-Control: s-maxage=300, stale-while-revalidate=60');
     header('Content-Type: application/json');
     try {
         $stmt = $pdo->query("SELECT uuid, name, presence, comment, created_at FROM comments ORDER BY id DESC");
         $comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Formata os dados de saída idênticos ao padrão do JavaScript do convite
         echo json_encode([
             "status" => true,
             "code" => 200,
@@ -69,6 +96,9 @@ if (preg_match('#^/api/v2/comment$#', $requestUri) && $_SERVER['REQUEST_METHOD']
     }
     exit;
 }
+
+
+//*************************sujestao da IA
 
 // 5. Rota para Receber e Salvar uma Nova Mensagem
 if (preg_match('#^/api/v2/comment$#', $requestUri) && $_SERVER['REQUEST_METHOD'] === 'POST') {
