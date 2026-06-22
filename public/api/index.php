@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 $host = 'ep-round-violet-ac12j9h3-pooler.sa-east-1.aws.neon.tech';
 $db   = 'neondb';
 $user = 'neondb_owner';
-$pass = 'npg_Q5uUN3hteavP';
+$pass = 'npg_VjQ8zMF6aSAB';
 
 try {
     $pdo = new PDO("pgsql:host=$host;dbname=$db;sslmode=require", $user, $pass, [
